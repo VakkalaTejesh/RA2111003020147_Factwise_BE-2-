@@ -1,27 +1,40 @@
-from bca import BCA,
-abstractmethod
+import json
+import os
+from datetime import datetime
 
-class UserBase(BCA):
+DB_DIR = 'db'
+
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR)
+
+# Helper functions
+def load_data(file_name):
+    file_path = os.path.join(DB_DIR, file_name)
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as file:
+            return json.load(file)
+    return {}
+
+def save_data(file_name, data):
+    file_path = os.path.join(DB_DIR, file_name)
+    with open(file_path, 'w') as file:
+        json.dump(data, file, indent=4)
+
+# UserBase class
+class UserBase:
     """
     Base interface implementation for API's to manage users.
     """
 
     # create a user
-    @abstractmethod
-    def create_user(self, user_data) -> str:
+    def create_user(self, request: str) -> str:
         """
-        Creates a new user
-
-        Input JSON: 
+        :param request: A json string with the user details
         {
-          "name" : "Mark",
-          "display_name" : "Mark Hendry"
+          "name" : "<user_name>",
+          "display_name" : "<display name>"
         }
-        
-        Output JSON:
-        {
-          "user_id":"456"
-        }
+        :return: A json string with the response {"id" : "<user_id>"}
 
         Constraint:
             * user name must be unique
@@ -31,56 +44,47 @@ class UserBase(BCA):
         pass
 
     # list all users
-    @abstractmethod
-    def list_users(self, user_data) -> str:
+    def list_users(self) -> str:
         """
-        List the users
-        
-        Input JSON:
+        :return: A json list with the response
+        [
           {
-            "name" : "Mark",
-            "display_name" : "Mark Hendry",
-            "creation_time" : "<24:15:30>"
+            "name" : "<user_name>",
+            "display_name" : "<display name>",
+            "creation_time" : "<some date:time format>"
           }
-        
-        Output JSON:
-        {
-          "user_id":"456"
-        }
-        
+        ]
         """
         pass
 
     # describe user
-    @abstractmethod
-    def describe_user(self, request:user_data) -> str:
+    def describe_user(self, request: str) -> str:
         """
-        Describes the user
-        Input JSON:
+        :param request: A json string with the user details
         {
-          "id" : "456"
+          "id" : "<user_id>"
         }
-        
-        Output JSON:
+
+        :return: A json string with the response
+
         {
-          "name" : "Mark",
-          "description" : "A very good developer ",
-          "creation_time" : "<24:15:30>"
+          "name" : "<user_name>",
+          "description" : "<some description>",
+          "creation_time" : "<some date:time format>"
         }
 
         """
         pass
 
     # update user
-    @abstractmethod
-    def update_user(self, request: user_data) -> str:
+    def update_user(self, request: str) -> str:
         """
-        Input JSON:
+        :param request: A json string with the user details
         {
-          "id" : "456",
+          "id" : "<user_id>",
           "user" : {
-            "name" : "Mark",
-            "display_name" : "Mark Hendry"
+            "name" : "<user_name>",
+            "display_name" : "<display name>"
           }
         }
 
@@ -92,22 +96,115 @@ class UserBase(BCA):
             * display name can be max 128 characters
         """
         pass
-    @abstractmethod
-    def get_user_teams(self, user_id) -> str:
+
+    def get_user_teams(self, request: str) -> str:
         """
-        Retrieves User details
+        :param request:
         {
-          "user_id" : "456"
+          "id" : "<user_id>"
         }
 
-        Output JSON:
+        :return: A json list with the response.
         [
           {
-            "name" : "Computators",
-            "description" : "This team objective is to develop a planner tool without any errors",
-            "creation_time" : "<24:15:30>"
+            "name" : "<team_name>",
+            "description" : "<some description>",
+            "creation_time" : "<some date:time format>"
           }
         ]
         """
         pass
+
+# UserManager class
+class UserManager(UserBase):
+    def __init__(self):
+        self.users_file = 'users.json'
+        self.users = load_data(self.users_file)
+
+    def create_user(self, request: str) -> str:
+        user_data = json.loads(request)
+        user_id = str(len(self.users) + 1)
+        if user_data['name'] in [user['name'] for user in self.users.values()]:
+            raise ValueError("User name must be unique")
+        if len(user_data['name']) > 64 or len(user_data['display_name']) > 64:
+            raise ValueError("Name or display name exceeds max length")
+        self.users[user_id] = {
+            "name": user_data['name'],
+            "display_name": user_data['display_name'],
+            "creation_time": datetime.now().isoformat()
+        }
+        save_data(self.users_file, self.users)
+        return json.dumps({"id": user_id})
+
+    def list_users(self) -> str:
+        return json.dumps(list(self.users.values()), indent=4)
+
+    def describe_user(self, request: str) -> str:
+        user_id = json.loads(request)['id']
+        user = self.users.get(user_id)
+        if user:
+            return json.dumps(user, indent=4)
+        else:
+            return json.dumps({"error": "User not found"}, indent=4)
+
+    def update_user(self, request: str) -> str:
+        user_data = json.loads(request)
+        user_id = user_data['id']
+        if user_id not in self.users:
+            return json.dumps({"error": "User not found"}, indent=4)
+        if len(user_data['user']['display_name']) > 128:
+            raise ValueError("Display name exceeds max length")
+        self.users[user_id]['display_name'] = user_data['user']['display_name']
+        save_data(self.users_file, self.users)
+        return json.dumps({"status": "User updated"}, indent=4)
+
+    def get_user_teams(self, request: str) -> str:
+        user_id = json.loads(request)['id']
+        user = self.users.get(user_id)
+        if user:
+            teams_file = 'teams.json'
+            teams = load_data(teams_file)
+            user_teams = [team for team in teams.values() if user_id in team['users']]
+            return json.dumps(user_teams, indent=4)
+        else:
+            return json.dumps({"error": "User not found"}, indent=4)
+
+# Usage Example
+if __name__ == "__main__":
+    user_manager = UserManager()
+
+    # Create users
+    user1 = {
+        "name": "john_doe",
+        "display_name": "John Doe"
+    }
+    print(user_manager.create_user(json.dumps(user1)))
+
+    user2 = {
+        "name": "jane_smith",
+        "display_name": "Jane Smith"
+    }
+    print(user_manager.create_user(json.dumps(user2)))
+
+    # List users
+    print(user_manager.list_users())
+
+    # Describe a user
+    print(user_manager.describe_user(json.dumps({"id": "1"})))
+
+    # Update a user
+    update_user_data = {
+        "id": "1",
+        "user": {
+            "display_name": "Johnathan Doe"
+        }
+    }
+    print(user_manager.update_user(json.dumps(update_user_data)))
+
+    # List users again to see the update
+    print(user_manager.list_users())
+
+    # Get user teams (assuming some teams have been created and assigned)
+    print(user_manager.get_user_teams(json.dumps({"id": "1"})))
+
 
